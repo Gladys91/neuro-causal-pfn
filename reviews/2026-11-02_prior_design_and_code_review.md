@@ -84,6 +84,24 @@ Concrete repair for L1, replacing the generic wording of P1:
 
 Expected overall shares after the repair with weights 0 : 0.5 : 0.5 (theory : trial : generic): zeros about 0.45, units about 0.45, tiny effects under 0.05. The expected PEHE gain stays honest at 0.005 to 0.02: the rescaling bound caps what a better magnitude alone buys at 0.010, and the rest depends on whether sharper training targets also sharpen the ranking near the threshold (Q1, diagnostic 3).
 
+### 1.8 Results of the day-1 diagnostics (author, 2 Nov)
+
+**Gate.** The final prior fails the default gate in 3 of 6 metrics at contexts of 512 and 3,000: exact zeros 0.20 to 0.21 (gate 0.35 to 0.65), effects of ±1 0.06 (gate 0.30 to 0.65), tiny effects 0.19, of which 0.72 inside the theory family (gate ≤ 0.10). L1 confirmed.
+
+**Where finalK loses to TabPFN-S on validation** (+0.036; TabPFN lower in 31 of 32 trials), as components of squared error, mean of the splits:
+
+| Component | finalK − TabPFN | p |
+|---|---|---|
+| Between classes (class means misplaced) | +0.010 | 0.001 |
+| Within class (spread and ordering of patients) | +0.011 | 2e-7 |
+| Mean prediction at tau = +1 (0.67 / 0.78 against 0.72 / 0.80) | −0.040 | 0.0005 |
+| Mean prediction at tau = 0 | +0.009 | 0.08 |
+| Mean prediction at tau = −1 | +0.020 | 0.5 |
+
+Reading. The gap splits in two equal halves. The between-class half is the shrinkage of +1, the direct consequence of a prior with 6 % of ±1 effects; it is the half a repaired prior (1.7) can remove, and the test of P1 is therefore specific: after P1 the mean prediction at +1 must move towards 0.72 / 0.80 and the between-class gap must shrink by at least half while the within-class gap stays put; if the within-class gap moves instead, the mechanism was wrong. The within-class half is ranking: from the same latents TabPFN orders patients better inside each class, so this half is not the irreducible threshold hedge (both estimators face that) and the prior's effect shapes do not address it. The levers for it are the context (S2: distinct patients, P6), prediction averaging (P8: seed ensemble and rotations, which reduce ordering noise and already gave 0.006 / 0.009 on test) and, less likely given the 21M null result, capacity. Arithmetic: removing either half alone leaves the model at about 0.285 to 0.287, the level of logistic regression; removing both reaches TabPFN. This confirms the forecast of Part 6.
+
+**Family weights against finalK** (paired over 16 deficits, mean of splits): theory : trial = 0.25 : 0.75 gives −0.003 (11 of 16) / −0.006 (13 of 16), mean −0.0047, p 0.009; 0.75 : 0.25 gives +0.008 / +0.011, mean +0.0092, p 6e-5. This is the first variant that beats finalK significantly on both splits, by a quarter of the 0.02 rule, and in the direction the diagnosis predicts (the theory family contributes 72 % tiny effects and 0 % of ±1). Under the pre-registered rule it is a tie and must be reported as such; it is still the right base for the next steps. Two consequences: run 0 : 1 (P3) next, since the dose-response is monotone so far; and build P1 on top of the better of 0.25 : 0.75 and 0 : 1 rather than on finalK, because P1 changes the trial and generic families and the weight optimum may move with it.
+
 ---
 
 ## Part 2. The "0.5 problem" (section 4 of the brief)
