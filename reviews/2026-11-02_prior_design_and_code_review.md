@@ -61,6 +61,29 @@ Two notes, not defects. The headline cell for classifiers is chosen on the relea
 
 **Defect C2 (guard fragility, unconfirmed).** `partitions.py:41-50` removes duplicate atoms by byte-identity of the overlap columns. If the primary `overlaps` and the matching `overlaps_<modality>` channel differ by one float (a cache augmented later from a re-loaded atlas is accepted up to 1e-4, `build_prior_cache.py:237-240`), the two halves of a benchmark network exist under two channel names and `is_benchmark_pair` (`partitions.py:54-64`, which requires equal channel names) no longer blocks them. Confirm in one minute: `len(atom_table(cache['overlaps'], extras)[0])` must be 80 (16 + 32 + 32), not 112.
 
+### 1.7 Measured confirmations (run by the author on 2 Nov, after this review)
+
+| Defect | Measured in the final prior | Trial | Verdict |
+|---|---|---|---|
+| L1, exact zeros | 0.21 of all queries (0.27 in the virtual-trial family) | 0.455 to 0.545 | Confirmed |
+| L1, effects of ±1 | 0.06 of all queries (0.22 in the virtual-trial family; 0 in step and in theory) | about 0.5 | Confirmed and serious: the model almost never sees ±1 |
+| L1, tiny effects (0 < \|tau\| < 0.05) | 0.19 of all queries, 0.70 in the theory family | 0 | The theory family teaches near-null effects |
+| S2, distinct rows per 3,000-row context | median 1,554 (52 %), 41 % in the virtual-trial family, p10 = 497 | 100 % | Confirmed: half of every context is repeated patients |
+| S1, context scale | mean RMS 0.04 to 0.12, mean variance 1.01 | 0 and 1 | Small: training contexts are already nearly standardised |
+| C1, family mix | 0.24 to 0.27 per part (generic linear + step = 0.50) | 0.25 / 0.25 / 0.5 | Negligible |
+| C2, atoms | 80; threshold 0.5; disconnectome channel | 80 | Ruled out |
+
+Consequences for the rest of this document. S1 is retired as a lever: P5 and P9 drop to the bottom of the plan. L1 becomes the main lever and its mechanism is now specific: ±1 effects are 6 % of what the model trains on, and the theory family spends 70 % of its queries on effects below 0.05, which is a direct cause of the measured shrinkage of ±1 (slope 0.66 / 0.73) that no rescaling can undo. S2 is confirmed as a second, independent mismatch. One check on the S2 figures: with the 1,207-lesion KCH pool a context cannot hold more than 1,207 distinct lesions, so a median of 1,554 distinct rows means the count included T and Y (or used the UCLH + KCH pool); counted on `Xc` alone the distinct share is at most 40 % and the verdict stands or worsens.
+
+Concrete repair for L1, replacing the generic wording of P1:
+
+- Virtual-trial family all-or-none: `GILES_HYPER="random_partitions=1 threshold=0.03:0.08 p_te=1:1 p_re=0:0 label_noise=0:0"`. Its unit share then equals one minus its zero share (about 0.73 instead of 0.22). Noise in outcomes is already supplied by the generic families and is absent from the scored cell.
+- Generic family with the trial's shape and no clipping: `generic_noclip=1 generic_kinds=step+trial+trial2 generic_kind_weights=0.2:0.4:0.4 generic_clean=1`. The trial kinds give zeros and units at about 0.5 each (`tm_prior_gate_fold0.csv`); the clipped linear kind is dropped or kept at a small weight.
+- Theory family: drop it (`FAMILY_W="0 1"`, P3) or give it the discrete shape (`shape_weights=0:1:0 disc_effect_scale=0.9:1`), which binarises S at pool quantiles so its CATE takes the values 0 and ±effect·D. Dropping it is simpler and also closes the genetics-halves question.
+- Re-enable the gate: remove the `--require ...=0:1` overrides in `g4c_launch.sh:174-175` and require `share_zero=0.35:0.65 share_unit=0.30:0.65 share_small=0:0.10`. The run must pass before it trains.
+
+Expected overall shares after the repair with weights 0 : 0.5 : 0.5 (theory : trial : generic): zeros about 0.45, units about 0.45, tiny effects under 0.05. The expected PEHE gain stays honest at 0.005 to 0.02: the rescaling bound caps what a better magnitude alone buys at 0.010, and the rest depends on whether sharper training targets also sharpen the ranking near the threshold (Q1, diagnostic 3).
+
 ---
 
 ## Part 2. The "0.5 problem" (section 4 of the brief)
@@ -128,9 +151,11 @@ Not proposed: a larger model (21M gave nothing), a three-class head (Q3), more t
 
 ## Part 6. Ranked plan for one week of compute
 
-1. Day 1, no GPU. Run the six confirmations of Part 1 (gate without overrides, family counts, atom count, context SD and distinct-row counts, cache metadata). Aggregate `mse_between` / `mse_within` for finalK and TabPFN-S from the existing `replica_results.csv`, and bin finalK's predictions by distance to threshold. Score P9 and P10 on validation (CPU). These settle Q1 and decide whether P1 or P5 is the main lever.
-2. Days 1 to 2. Screens of P1, P3, P5 and P6 (four 20-minute runs), each followed by a full validation scoring. Launch 3 seeds at the final budget for every screen that is not ≥ 0.005 worse than finalK; P3 is launched regardless, for the defence.
-3. Days 3 to 4. Score the 3-seed runs on all ten pseudo-folds; combine the two best compatible changes in one run (for example P1 + P5) with 3 seeds. Run P13 in the gaps.
+Revised after the confirmations of 1.7: S1 is out, L1 (with the concrete repair in 1.7) is first, S2 second.
+
+1. Day 1, no GPU. Aggregate `mse_between` / `mse_within` for finalK and TabPFN-S from the existing `replica_results.csv`, bin finalK's predictions by distance to threshold, and read the predicted histograms of near-threshold patients (Q1, diagnostics 1 to 3). Recount S2 on `Xc` alone. Score P10 on validation (CPU).
+2. Days 1 to 2. Screens of P1 (the 1.7 repair, with the gate re-enabled), P3 and P6 (three 20-minute runs), each followed by a full validation scoring. Launch 3 seeds at the final budget for every screen that is not ≥ 0.005 worse than finalK; P1 and P3 are launched regardless, P1 because it is the only lever with a measured mechanism, P3 for the defence.
+3. Days 3 to 4. Score the 3-seed runs on all ten pseudo-folds; combine P1 with P6 (distinct contexts, log-uniform length) in one run with 3 seeds, and P1 with P7 (CATE weight 2) if P7's screen holds. Run P13 in the gaps. P5 and P9 only if everything else is done.
 4. Day 5. P8 on validation for the best model; `oracle_nmf_floor.py --tabpfn` on CPU in parallel to decide whether P11 is worth a later chapter rather than this week.
 5. Days 6 to 7. One test scoring of the selected model (and its P8 secondary), paired tests, and the write-up of Part 1's defects as limitations where they were not fixed.
 
